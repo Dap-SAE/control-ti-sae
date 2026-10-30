@@ -405,7 +405,7 @@ elif mod == "Equipos: Registrar Equipo":
 
 elif mod == "Equipos: Buscar":
     st.title("💻 Equipos / Computadores - Búsqueda Avanzada")
-    st.markdown("💡 *Puedes hacer doble clic en cualquier celda para editar los datos de los equipos y luego presionar 'Guardar Cambios en Base de Datos'.*")
+    st.markdown("💡 *Puedes hacer doble clic en cualquier celda para editar, o desplazarte hasta la última fila vacía (símbolo '+') para **agregar un nuevo equipo**. Presiona 'Guardar Cambios' al terminar.*")
 
     col_txt, col_qr = st.columns([3, 1])
 
@@ -458,92 +458,128 @@ elif mod == "Equipos: Buscar":
 
     res = run_query(q, params)
 
-    if not res.empty:
-        res_editada = st.data_editor(
-            res, hide_index=True, use_container_width=True, disabled=["id", "nombre_equipo"], key="editor_computadores_buscar"
-        )
+    # Si está vacío, creamos la estructura base para que siempre se vea la tabla y permita agregar
+    if res.empty:
+        res = pd.DataFrame(columns=["id", "sucursal", "estado", "tipo_equipo", "nombre_equipo", "serial_number", "mac_ethernet", "mac_wifi", "fecha_inicio", "usuario", "marca_modelo", "procesador", "ram", "version_windows", "version_antivirus", "dominio_tsae", "act_automatica", "office", "cuenta_office_365", "anydesk", "Pass-Any", "observacion", "email", "acceso_sap", "ultima_mantencion", "ex_usuario", "Proveedor", "N° Factura"])
 
-        col_save, col_dl = st.columns([1, 1])
+    res_editada = st.data_editor(
+        res, hide_index=True, use_container_width=True, 
+        num_rows="dynamic", # <-- Propiedad habilitada para agregar registros
+        disabled=["id"],    # <-- Se removió nombre_equipo para que puedas nombrar los equipos nuevos
+        key="editor_computadores_buscar"
+    )
 
-        with col_save:
-            if st.button("💾 Guardar Cambios en Base de Datos", key="btn_save_eq"):
-                editor_state = st.session_state.get("editor_computadores_buscar", {})
-                edited_rows = editor_state.get("edited_rows", {})
+    col_save, col_dl = st.columns([1, 1])
 
-                for row_idx, changes in edited_rows.items():
-                    if row_idx < len(res):
-                        nombre_equipo = res.iloc[row_idx]["nombre_equipo"]
+    with col_save:
+        if st.button("💾 Guardar Cambios en Base de Datos", key="btn_save_eq"):
+            editor_state = st.session_state.get("editor_computadores_buscar", {})
+            edited_rows = editor_state.get("edited_rows", {})
+            deleted_rows = editor_state.get("deleted_rows", [])
+
+            # Lógica de historial de asignaciones solo para filas existentes
+            for row_idx, changes in edited_rows.items():
+                if row_idx < len(res):
+                    nombre_equipo = res.iloc[row_idx]["nombre_equipo"]
+                    
+                    if "usuario" in changes:
+                        nuevo_usuario = changes["usuario"]
+                        usuario_anterior = res.iloc[row_idx]["usuario"]
+                        fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         
-                        if "usuario" in changes:
-                            nuevo_usuario = changes["usuario"]
-                            usuario_anterior = res.iloc[row_idx]["usuario"]
-                            fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            
-                            execute_db("""
-                                UPDATE historial_asignaciones 
-                                SET fecha_devolucion = ? 
-                                WHERE nombre_equipo = ? AND fecha_devolucion IS NULL
-                            """, (fecha_actual, nombre_equipo))
+                        execute_db("""
+                            UPDATE historial_asignaciones 
+                            SET fecha_devolucion = ? 
+                            WHERE nombre_equipo = ? AND fecha_devolucion IS NULL
+                        """, (fecha_actual, nombre_equipo))
 
-                            execute_db("""
-                                INSERT INTO historial_asignaciones (nombre_equipo, usuario, fecha_asignacion, observacion)
-                                VALUES (?, ?, ?, ?)
-                            """, (nombre_equipo, nuevo_usuario, fecha_actual, f"Reasignado (Anterior: {usuario_anterior})"))
+                        execute_db("""
+                            INSERT INTO historial_asignaciones (nombre_equipo, usuario, fecha_asignacion, observacion)
+                            VALUES (?, ?, ?, ?)
+                        """, (nombre_equipo, nuevo_usuario, fecha_actual, f"Reasignado (Anterior: {usuario_anterior})"))
 
-                def clean_field(val):
-                    return "" if pd.isna(val) or val is None else str(val).strip()
+            def clean_field(val):
+                return "" if pd.isna(val) or val is None else str(val).strip()
 
-                datos_actualizacion = [
-                    (
-                        clean_field(row.get("sucursal")), clean_field(row.get("estado")), clean_field(row.get("tipo_equipo")),
-                        clean_field(row.get("serial_number")), clean_field(row.get("mac_ethernet")), clean_field(row.get("mac_wifi")),
-                        clean_field(row.get("fecha_inicio")), clean_field(row.get("usuario")), clean_field(row.get("marca_modelo")),
-                        clean_field(row.get("procesador")), clean_field(row.get("ram")), clean_field(row.get("version_windows")),
-                        clean_field(row.get("version_antivirus")), clean_field(row.get("dominio_tsae")), clean_field(row.get("act_automatica")),
-                        clean_field(row.get("office")), clean_field(row.get("cuenta_office_365")), clean_field(row.get("anydesk")),
-                        clean_field(row.get("Pass-Any")), clean_field(row.get("observacion")), clean_field(row.get("email")),
-                        clean_field(row.get("acceso_sap")), clean_field(row.get("ultima_mantencion")), clean_field(row.get("ex_usuario")),
-                        clean_field(row.get("Proveedor")), clean_field(row.get("N° Factura")), row["id"]
-                    )
-                    for _, row in res_editada.iterrows()
-                ]
+            datos_actualizacion = []
+            datos_insercion = []
 
-                query_update = """
-                    UPDATE computadores
-                    SET sucursal=?, estado=?, tipo_equipo=?, serial_number=?, mac_ethernet=?, mac_wifi=?,
-                        fecha_inicio=?, usuario=?, marca_modelo=?, procesador=?, ram=?, version_windows=?,
-                        version_antivirus=?, dominio_tsae=?, act_automatica=?, office=?, cuenta_office_365=?,
-                        anydesk=?, pass_any=?, observacion=?, email=?, acceso_sap=?, ultima_mantencion=?, ex_usuario=?,
-                        proveedor=?, num_factura=?
-                    WHERE id=?
-                """
-                try:
+            for _, row in res_editada.iterrows():
+                row_id = row.get("id")
+                tupla_datos = (
+                    clean_field(row.get("sucursal")), clean_field(row.get("estado")), clean_field(row.get("tipo_equipo")),
+                    clean_field(row.get("nombre_equipo")), clean_field(row.get("serial_number")), clean_field(row.get("mac_ethernet")), 
+                    clean_field(row.get("mac_wifi")), clean_field(row.get("fecha_inicio")), clean_field(row.get("usuario")), 
+                    clean_field(row.get("marca_modelo")), clean_field(row.get("procesador")), clean_field(row.get("ram")), 
+                    clean_field(row.get("version_windows")), clean_field(row.get("version_antivirus")), clean_field(row.get("dominio_tsae")), 
+                    clean_field(row.get("act_automatica")), clean_field(row.get("office")), clean_field(row.get("cuenta_office_365")), 
+                    clean_field(row.get("anydesk")), clean_field(row.get("Pass-Any")), clean_field(row.get("observacion")), 
+                    clean_field(row.get("email")), clean_field(row.get("acceso_sap")), clean_field(row.get("ultima_mantencion")), 
+                    clean_field(row.get("ex_usuario")), clean_field(row.get("Proveedor")), clean_field(row.get("N° Factura"))
+                )
+
+                if pd.isna(row_id):
+                    # Es una nueva fila
+                    datos_insercion.append(tupla_datos)
+                else:
+                    # Es una actualización
+                    datos_actualizacion.append(tupla_datos + (row_id,))
+
+            query_update = """
+                UPDATE computadores
+                SET sucursal=?, estado=?, tipo_equipo=?, nombre_equipo=?, serial_number=?, mac_ethernet=?, mac_wifi=?,
+                    fecha_inicio=?, usuario=?, marca_modelo=?, procesador=?, ram=?, version_windows=?,
+                    version_antivirus=?, dominio_tsae=?, act_automatica=?, office=?, cuenta_office_365=?,
+                    anydesk=?, pass_any=?, observacion=?, email=?, acceso_sap=?, ultima_mantencion=?, ex_usuario=?,
+                    proveedor=?, num_factura=?
+                WHERE id=?
+            """
+            
+            query_insert = """
+                INSERT INTO computadores (
+                    sucursal, estado, tipo_equipo, nombre_equipo, serial_number, mac_ethernet, mac_wifi,
+                    fecha_inicio, usuario, marca_modelo, procesador, ram, version_windows, version_antivirus,
+                    dominio_tsae, act_automatica, office, cuenta_office_365, anydesk, pass_any, observacion,
+                    email, acceso_sap, ultima_mantencion, ex_usuario, proveedor, num_factura
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """
+            try:
+                # 1. Actualizar registros modificados
+                if datos_actualizacion:
                     execute_many_db(query_update, datos_actualizacion)
-                    st.session_state.msg_exito = "¡Información de equipos actualizada correctamente!"
-                    st.rerun()
-                except Exception:
-                    pass
+                # 2. Insertar registros nuevos
+                if datos_insercion:
+                    execute_many_db(query_insert, datos_insercion)
+                # 3. Borrar registros eliminados en la interfaz (opcional, habilita selección de fila y "Suprimir")
+                if deleted_rows:
+                    for r_idx in deleted_rows:
+                        d_id = res.iloc[r_idx]["id"]
+                        execute_db("DELETE FROM computadores WHERE id=?", (d_id,))
 
-        with col_dl:
-            res_editada.to_excel("reporte_inventario.xlsx", index=False)
-            with open("reporte_inventario.xlsx", "rb") as f:
-                st.download_button("📥 Descargar Resultado en Excel", data=f, file_name="Equipos_Filtrados.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-        
-        st.divider()
-        st.subheader("🕰️ Historial de Asignaciones por Equipo")
-        equipo_historial = st.selectbox("Selecciona un equipo para ver su historial de usuarios:", res["nombre_equipo"].tolist())
-        
-        if equipo_historial:
-            df_historial = run_query(
-                "SELECT usuario AS 'Usuario Asignado', fecha_asignacion AS 'Fecha de Asignación', fecha_devolucion AS 'Fecha Devolución', observacion AS 'Observaciones' FROM historial_asignaciones WHERE nombre_equipo = ? ORDER BY id DESC", 
-                (equipo_historial,)
-            )
-            if not df_historial.empty:
-                st.dataframe(df_historial, use_container_width=True, hide_index=True)
-            else:
-                st.info(f"El equipo {equipo_historial} aún no tiene un historial de re-asignaciones registrado.")
-    else:
-        st.info("No se encontraron equipos registrados.")
+                st.session_state.msg_exito = "¡Información de equipos actualizada y guardada correctamente!"
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error al guardar: {e}")
+
+    with col_dl:
+        res_editada.to_excel("reporte_inventario.xlsx", index=False)
+        with open("reporte_inventario.xlsx", "rb") as f:
+            st.download_button("📥 Descargar Resultado en Excel", data=f, file_name="Equipos_Filtrados.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+    
+    st.divider()
+    st.subheader("🕰️ Historial de Asignaciones por Equipo")
+    
+    equipo_historial = st.selectbox("Selecciona un equipo para ver su historial de usuarios:", res["nombre_equipo"].dropna().unique().tolist())
+    
+    if equipo_historial:
+        df_historial = run_query(
+            "SELECT usuario AS 'Usuario Asignado', fecha_asignacion AS 'Fecha de Asignación', fecha_devolucion AS 'Fecha Devolución', observacion AS 'Observaciones' FROM historial_asignaciones WHERE nombre_equipo = ? ORDER BY id DESC", 
+            (equipo_historial,)
+        )
+        if not df_historial.empty:
+            st.dataframe(df_historial, use_container_width=True, hide_index=True)
+        else:
+            st.info(f"El equipo {equipo_historial} aún no tiene un historial de re-asignaciones registrado.")
 
 
 # ------------------------------------------------------------------------------
