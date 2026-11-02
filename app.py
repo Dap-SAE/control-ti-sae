@@ -1353,7 +1353,7 @@ elif mod == "Carga Masiva (Excel Completo)":
 # USUARIOS - SERVIDORES GCP
 # ------------------------------------------------------------------------------
 elif mod == "Usuarios - Servidores GCP":
-    st.title("☁️ Servidores GCP")
+    st.title("☁️ Google Cloud Platform (GCP)")
     
     # Crear las dos pestañas
     tab_usuarios, tab_resumen = st.tabs(["👥 Usuarios AD/SAP", "📋 Resumen de Accesos"])
