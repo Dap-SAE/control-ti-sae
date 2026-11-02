@@ -5,6 +5,7 @@ import qrcode
 import sqlite3
 import streamlit as st
 from datetime import datetime
+import hashlib
 
 # Configuración de página
 st.set_page_config(
@@ -83,6 +84,17 @@ def init_db():
                 marca TEXT, modelo TEXT, anio TEXT, imei TEXT, ultimo_reporte TEXT,
                 proveedor_gps TEXT, sucursal TEXT, estado TEXT)"""
         ]
+
+         # --- GESTION USUARIOS  ---
+        for query in tablas_sql:
+            c.execute(query)
+
+        # Crear administrador por defecto ("admin" / "admin123")
+        c.execute("SELECT COUNT(*) FROM usuarios")
+        if c.fetchone()[0] == 0:
+            default_hash = hashlib.sha256("admin123".encode()).hexdigest()
+            conn.execute("INSERT INTO usuarios (username, password_hash, rol, estado) VALUES (?, ?, ?, ?)", 
+                         ("admin", default_hash, "Administrador", "ACTIVO"))
         
         for query in tablas_sql:
             c.execute(query)
@@ -134,62 +146,126 @@ def execute_many_db(query, params_list):
         st.error(f"Error de base de datos (Escritura Masiva): {e}")
         raise e
 
+# --- MATRIZ DE PERMISOS POR ROL ---
+# Define qué módulos puede ver cada rol. Usa "*" para acceso total.
+PERMISOS = {
+    "Administrador": ["*"],
+    "Técnico": ["Panel General", "Equipos", "Tickets", "Cuentas Redes"],
+    "Lector": ["Panel General"]
+}
+
+def tiene_permiso(rol, modulo_categoria):
+    if rol not in PERMISOS: return False
+    if "*" in PERMISOS[rol]: return True
+    return modulo_categoria in PERMISOS[rol]
+
+# --- ESTADO DE SESIÓN ---
+if "autenticado" not in st.session_state:
+    st.session_state.autenticado = False
+    st.session_state.rol = None
+    st.session_state.usuario_actual = None
+
+# --- PANTALLA DE LOGIN ---
+if not st.session_state.autenticado:
+    st.title("🔐 Acceso al Sistema - Control TI")
+    
+    col_log1, col_log2, col_log3 = st.columns([1, 2, 1])
+    with col_log2:
+        with st.form("form_login"):
+            usuario_input = st.text_input("Usuario")
+            password_input = st.text_input("Contraseña", type="password")
+            btn_login = st.form_submit_button("Ingresar", use_container_width=True)
+            
+            if btn_login:
+                hash_input = hashlib.sha256(password_input.encode()).hexdigest()
+                df_user = run_query("SELECT username, rol FROM usuarios WHERE username=? AND password_hash=? AND estado='ACTIVO'", (usuario_input, hash_input))
+                
+                if not df_user.empty:
+                    st.session_state.autenticado = True
+                    st.session_state.usuario_actual = df_user.iloc[0]["username"]
+                    st.session_state.rol = df_user.iloc[0]["rol"]
+                    st.session_state.modulo_activo = "Panel General: Resumen General"
+                    st.rerun()
+                else:
+                    st.error("⚠️ Credenciales incorrectas o usuario inactivo.")
+    
+    # Detiene la ejecución del resto del script si no está logueado
+    st.stop()
 
 # --- INTERFAZ BARRA LATERAL ---
 st.sidebar.title("🗂️ Control TI - Menú")
+
+# Info del usuario y Logout
+st.sidebar.success(f"👤 **{st.session_state.usuario_actual}** | Rol: {st.session_state.rol}")
+if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
+    st.session_state.autenticado = False
+    st.rerun()
+st.sidebar.divider()
 
 if "modulo_activo" not in st.session_state:
     st.session_state.modulo_activo = "Panel General: Resumen General"
 
 # 1. PANEL GENERAL
-with st.sidebar.expander("📊 Panel General", expanded=True):
-    if st.button("📊 Resumen General", use_container_width=True):
-        st.session_state.modulo_activo = "Panel General: Resumen General"
+if tiene_permiso(st.session_state.rol, "Panel General"):
+    with st.sidebar.expander("📊 Panel General", expanded=True):
+        if st.button("📊 Resumen General", use_container_width=True):
+            st.session_state.modulo_activo = "Panel General: Resumen General"
 
 # 2. EQUIPOS / COMPUTADORES
-with st.sidebar.expander("💻 Equipos / Computadores"):
-    if st.button("➕ Registrar Equipo", use_container_width=True):
-        st.session_state.modulo_activo = "Equipos: Registrar Equipo"
-    if st.button("🔍 Buscar", use_container_width=True):
-        st.session_state.modulo_activo = "Equipos: Buscar"
-    if st.button("🏷️ Generador de Etiquetas QR", use_container_width=True):
-        st.session_state.modulo_activo = "Equipos: Generar QR"
+if tiene_permiso(st.session_state.rol, "Equipos"):
+    with st.sidebar.expander("💻 Equipos / Computadores"):
+        if st.button("➕ Registrar Equipo", use_container_width=True):
+            st.session_state.modulo_activo = "Equipos: Registrar Equipo"
+        if st.button("🔍 Buscar", use_container_width=True):
+            st.session_state.modulo_activo = "Equipos: Buscar"
+        if st.button("🏷️ Generador de Etiquetas QR", use_container_width=True):
+            st.session_state.modulo_activo = "Equipos: Generar QR"
 
 # 3. CUENTAS & REDES
-with st.sidebar.expander("🌐 Cuentas & Redes"):
-    if st.button("✉️ Cuentas correo", use_container_width=True):
-        st.session_state.modulo_activo = "Casilla correo"
-    if st.button("🔐 Licencias Office 365", use_container_width=True):
-        st.session_state.modulo_activo = "Licencias Office 365"
-    if st.button("🛜 Redes WiFi", use_container_width=True):
-        st.session_state.modulo_activo = "Redes WiFi"
-    if st.button("🌐 Asignación IP Entel", use_container_width=True):
-        st.session_state.modulo_activo = "Asignación IP Entel"
-    if st.button("🖥️ Servidores Local", use_container_width=True):
-        st.session_state.modulo_activo = "Servidores Local"
-    if st.button("📹 Acceso a Cámaras", use_container_width=True):
-        st.session_state.modulo_activo = "Acceso a Cámaras"
-    if st.button("📡 Enlaces Entel", use_container_width=True):
-        st.session_state.modulo_activo = "Enlaces Entel"
-    if st.button("🖨️ Impresoras", use_container_width=True):
-        st.session_state.modulo_activo = "Impresoras"
+if tiene_permiso(st.session_state.rol, "Cuentas Redes"):
+    with st.sidebar.expander("🌐 Cuentas & Redes"):
+        if st.button("✉️ Cuentas correo", use_container_width=True):
+            st.session_state.modulo_activo = "Casilla correo"
+        if st.button("🔐 Licencias Office 365", use_container_width=True):
+            st.session_state.modulo_activo = "Licencias Office 365"
+        if st.button("🛜 Redes WiFi", use_container_width=True):
+            st.session_state.modulo_activo = "Redes WiFi"
+        if st.button("🌐 Asignación IP Entel", use_container_width=True):
+            st.session_state.modulo_activo = "Asignación IP Entel"
+        if st.button("🖥️ Servidores Local", use_container_width=True):
+            st.session_state.modulo_activo = "Servidores Local"
+        if st.button("📹 Acceso a Cámaras", use_container_width=True):
+            st.session_state.modulo_activo = "Acceso a Cámaras"
+        if st.button("📡 Enlaces Entel", use_container_width=True):
+            st.session_state.modulo_activo = "Enlaces Entel"
+        if st.button("🖨️ Impresoras", use_container_width=True):
+            st.session_state.modulo_activo = "Impresoras"
 
 # 4. REGISTRO DE TICKET
-with st.sidebar.expander("🎫 Registro de Ticket"):
-    if st.button("📡 Historial de Tickets Entel", use_container_width=True):
-        st.session_state.modulo_activo = "Historial de Tickets Entel"
-    if st.button("🚛 Historial de Tickets Gotruck", use_container_width=True):
-        st.session_state.modulo_activo = "Historial de Tickets Gotruck"
+if tiene_permiso(st.session_state.rol, "Tickets"):
+    with st.sidebar.expander("🎫 Registro de Ticket"):
+        if st.button("📡 Historial de Tickets Entel", use_container_width=True):
+            st.session_state.modulo_activo = "Historial de Tickets Entel"
+        if st.button("🚛 Historial de Tickets Gotruck", use_container_width=True):
+            st.session_state.modulo_activo = "Historial de Tickets Gotruck"
 
 # 5. CARGA DE DATOS
-with st.sidebar.expander("🚀 Carga de Datos"):
-    if st.button("🚀 Carga Masiva (Excel Completo)", use_container_width=True):
-        st.session_state.modulo_activo = "Carga Masiva (Excel Completo)"
+if tiene_permiso(st.session_state.rol, "Carga Datos"):
+    with st.sidebar.expander("🚀 Carga de Datos"):
+        if st.button("🚀 Carga Masiva (Excel Completo)", use_container_width=True):
+            st.session_state.modulo_activo = "Carga Masiva (Excel Completo)"
 
 # 6. GESTIÓN DE FLOTA Y GPS (NUEVO MENÚ)
-with st.sidebar.expander("📍 Flota & GPS"):
-    if st.button("🛰️ Control de GPS", use_container_width=True):
-        st.session_state.modulo_activo = "Control de GPS"
+if tiene_permiso(st.session_state.rol, "Flota GPS"):
+    with st.sidebar.expander("📍 Flota & GPS"):
+        if st.button("🛰️ Control de GPS", use_container_width=True):
+            st.session_state.modulo_activo = "Control de GPS"
+
+# --- MÓDULO EXCLUSIVO DE ADMINISTRACIÓN ---
+if tiene_permiso(st.session_state.rol, "Administrador"):
+    st.sidebar.divider()
+    if st.sidebar.button("⚙️ Gestión de Usuarios", use_container_width=True):
+        st.session_state.modulo_activo = "Gestion Usuarios"
 
 
 # ==============================================================================
@@ -1258,3 +1334,59 @@ elif mod == "Carga Masiva (Excel Completo)":
 
             except Exception as e:
                 st.error(f"Error crítico en la importación: {e}")
+
+
+    elif mod == "Gestion Usuarios":
+    
+        st.title("⚙️ Gestión de Usuarios")
+    
+    if st.session_state.rol != "Administrador":
+        st.error("No tienes permisos para ver esta sección.")
+        st.stop()
+
+    st.markdown("💡 *Edita roles y estados directamente en la tabla. Para crear usuarios, añade una fila al final.*")
+    
+    df_users = run_query("SELECT id, username AS 'Usuario', rol AS 'Rol', estado AS 'Estado' FROM usuarios")
+    
+    # Editor de usuarios (No mostramos el password hash)
+    df_users_edit = st.data_editor(
+        df_users, hide_index=True, use_container_width=True, num_rows="dynamic", disabled=["id"], key="edit_users"
+    )
+    
+    # Campo para generar contraseñas nuevas a usuarios creados/editados
+    st.divider()
+    st.subheader("🔑 Asignar o Cambiar Contraseña")
+    col_u, col_p, col_b = st.columns(3)
+    usr_sel = col_u.selectbox("Seleccionar Usuario", df_users["Usuario"].tolist() if not df_users.empty else [])
+    new_pass = col_p.text_input("Nueva Contraseña", type="password")
+    
+    if col_b.button("Cambiar Contraseña"):
+        if usr_sel and new_pass:
+            new_hash = hashlib.sha256(new_pass.encode()).hexdigest()
+            execute_db("UPDATE usuarios SET password_hash=? WHERE username=?", (new_hash, usr_sel))
+            st.success(f"Contraseña actualizada para {usr_sel}")
+
+    # Guardar cambios de roles/estados
+    if st.button("💾 Guardar Cambios en Usuarios", key="btn_save_users"):
+        cambios = st.session_state.get("edit_users", {})
+        try:
+            with sqlite3.connect(DB_NAME) as conn:
+                for row_idx, updates in cambios.get("edited_rows", {}).items():
+                    real_id = int(df_users.iloc[int(row_idx)]["id"])
+                    usr = updates.get("Usuario", df_users.iloc[int(row_idx)]["Usuario"])
+                    rol = updates.get("Rol", df_users.iloc[int(row_idx)]["Rol"])
+                    est = updates.get("Estado", df_users.iloc[int(row_idx)]["Estado"])
+                    conn.execute("UPDATE usuarios SET username=?, rol=?, estado=? WHERE id=?", (usr, rol, est, real_id))
+                
+                for new_row in cambios.get("added_rows", []):
+                    usr = new_row.get("Usuario", "")
+                    rol = new_row.get("Rol", "Técnico")
+                    est = new_row.get("Estado", "ACTIVO")
+                    # Contraseña por defecto temporal (temporal123)
+                    tmp_hash = hashlib.sha256("temporal123".encode()).hexdigest()
+                    conn.execute("INSERT INTO usuarios (username, password_hash, rol, estado) VALUES (?, ?, ?, ?)", (usr, tmp_hash, rol, est))
+            
+            st.session_state.msg_exito = "¡Usuarios actualizados correctamente!"
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error al guardar usuarios: {e}")
