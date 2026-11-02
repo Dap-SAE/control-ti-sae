@@ -1353,8 +1353,12 @@ elif mod == "Carga Masiva (Excel Completo)":
 # USUARIOS - SERVIDORES GCP
 # ------------------------------------------------------------------------------
 elif mod == "Usuarios - Servidores GCP":
-    st.title("☁️ Google Cloud Platform (GCP)")
+    st.title("☁️ Servidores GCP")
     
+    # Función limpiadora para evitar errores de celdas vacías (Nulos/NaN)
+    def clean_val(v):
+        return "" if pd.isna(v) or v is None else str(v).strip()
+
     # Crear las dos pestañas
     tab_usuarios, tab_resumen = st.tabs(["👥 Usuarios AD/SAP", "📋 Resumen de Accesos"])
     
@@ -1366,39 +1370,42 @@ elif mod == "Usuarios - Servidores GCP":
         if df_gcp.empty:
             df_gcp = pd.DataFrame(columns=["id", "Empresa", "Sucursal", "Usuario AD Cloud", "Name domain user", "Contraseña AD Cloud", "Usuario SAP", "Status", "Cliente", "Acceso a SAP 31-01"])
 
-        df_gcp_edit = st.data_editor(df_gcp, hide_index=True, use_container_width=True, num_rows="dynamic", disabled=["id"], key="editor_gcp")
+        st.data_editor(df_gcp, hide_index=True, use_container_width=True, num_rows="dynamic", disabled=["id"], key="editor_gcp")
 
         if st.button("💾 Guardar Cambios en Usuarios", key="btn_save_gcp"):
             cambios = st.session_state.get("editor_gcp", {})
             try:
                 with sqlite3.connect(DB_NAME) as conn:
+                    # 1. Actualizar registros modificados
                     for row_idx, updates in cambios.get("edited_rows", {}).items():
                         real_id = int(df_gcp.iloc[int(row_idx)]["id"])
-                        emp = updates.get("Empresa", df_gcp.iloc[int(row_idx)]["Empresa"])
-                        suc = updates.get("Sucursal", df_gcp.iloc[int(row_idx)]["Sucursal"])
-                        usr_ad = updates.get("Usuario AD Cloud", df_gcp.iloc[int(row_idx)]["Usuario AD Cloud"])
-                        name = updates.get("Name domain user", df_gcp.iloc[int(row_idx)]["Name domain user"])
-                        pwd = updates.get("Contraseña AD Cloud", df_gcp.iloc[int(row_idx)]["Contraseña AD Cloud"])
-                        usr_sap = updates.get("Usuario SAP", df_gcp.iloc[int(row_idx)]["Usuario SAP"])
-                        stat = updates.get("Status", df_gcp.iloc[int(row_idx)]["Status"])
-                        cli = updates.get("Cliente", df_gcp.iloc[int(row_idx)]["Cliente"])
-                        acc_sap = updates.get("Acceso a SAP 31-01", df_gcp.iloc[int(row_idx)]["Acceso a SAP 31-01"])
+                        emp = clean_val(updates.get("Empresa", df_gcp.iloc[int(row_idx)]["Empresa"]))
+                        suc = clean_val(updates.get("Sucursal", df_gcp.iloc[int(row_idx)]["Sucursal"]))
+                        usr_ad = clean_val(updates.get("Usuario AD Cloud", df_gcp.iloc[int(row_idx)]["Usuario AD Cloud"]))
+                        name = clean_val(updates.get("Name domain user", df_gcp.iloc[int(row_idx)]["Name domain user"]))
+                        pwd = clean_val(updates.get("Contraseña AD Cloud", df_gcp.iloc[int(row_idx)]["Contraseña AD Cloud"]))
+                        usr_sap = clean_val(updates.get("Usuario SAP", df_gcp.iloc[int(row_idx)]["Usuario SAP"]))
+                        stat = clean_val(updates.get("Status", df_gcp.iloc[int(row_idx)]["Status"]))
+                        cli = clean_val(updates.get("Cliente", df_gcp.iloc[int(row_idx)]["Cliente"]))
+                        acc_sap = clean_val(updates.get("Acceso a SAP 31-01", df_gcp.iloc[int(row_idx)]["Acceso a SAP 31-01"]))
                         
                         conn.execute("UPDATE usuarios_gcp SET empresa=?, sucursal=?, usuario_ad_cloud=?, name_domain_user=?, password_ad_cloud=?, usuario_sap=?, status=?, cliente=?, acceso_sap_31_01=? WHERE id=?", (emp, suc, usr_ad, name, pwd, usr_sap, stat, cli, acc_sap, real_id))
                     
+                    # 2. Insertar registros nuevos
                     for new_row in cambios.get("added_rows", []):
-                        emp = new_row.get("Empresa", "")
-                        suc = new_row.get("Sucursal", "")
-                        usr_ad = new_row.get("Usuario AD Cloud", "")
-                        name = new_row.get("Name domain user", "")
-                        pwd = new_row.get("Contraseña AD Cloud", "")
-                        usr_sap = new_row.get("Usuario SAP", "")
-                        stat = new_row.get("Status", "")
-                        cli = new_row.get("Cliente", "")
-                        acc_sap = new_row.get("Acceso a SAP 31-01", "")
+                        emp = clean_val(new_row.get("Empresa"))
+                        suc = clean_val(new_row.get("Sucursal"))
+                        usr_ad = clean_val(new_row.get("Usuario AD Cloud"))
+                        name = clean_val(new_row.get("Name domain user"))
+                        pwd = clean_val(new_row.get("Contraseña AD Cloud"))
+                        usr_sap = clean_val(new_row.get("Usuario SAP"))
+                        stat = clean_val(new_row.get("Status"))
+                        cli = clean_val(new_row.get("Cliente"))
+                        acc_sap = clean_val(new_row.get("Acceso a SAP 31-01"))
                         
                         conn.execute("INSERT INTO usuarios_gcp (empresa, sucursal, usuario_ad_cloud, name_domain_user, password_ad_cloud, usuario_sap, status, cliente, acceso_sap_31_01) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (emp, suc, usr_ad, name, pwd, usr_sap, stat, cli, acc_sap))
                         
+                    # 3. Eliminar registros
                     for row_idx in cambios.get("deleted_rows", []):
                         real_id = int(df_gcp.iloc[int(row_idx)]["id"])
                         conn.execute("DELETE FROM usuarios_gcp WHERE id=?", (real_id,))
@@ -1408,7 +1415,7 @@ elif mod == "Usuarios - Servidores GCP":
             except Exception as e:
                 st.error(f"Error al guardar los datos de GCP: {e}")
 
-    # PESTAÑA 2: Nueva Tabla Resumen
+    # PESTAÑA 2: Tabla Resumen
     with tab_resumen:
         st.markdown("💡 *Administra los accesos generales. Agrega filas al final (+) y presiona guardar.*")
         df_res = run_query('SELECT id, correo AS "Correo", usuario AS "Usuario", password AS "Contraseña", acceso_maquina AS "Acceso maquina" FROM gcp_resumen')
@@ -1416,7 +1423,7 @@ elif mod == "Usuarios - Servidores GCP":
         if df_res.empty:
             df_res = pd.DataFrame(columns=["id", "Correo", "Usuario", "Contraseña", "Acceso maquina"])
 
-        df_res_edit = st.data_editor(df_res, hide_index=True, use_container_width=True, num_rows="dynamic", disabled=["id"], key="editor_gcp_res")
+        st.data_editor(df_res, hide_index=True, use_container_width=True, num_rows="dynamic", disabled=["id"], key="editor_gcp_res")
 
         if st.button("💾 Guardar Resumen en BD", key="btn_save_gcp_res"):
             cambios_res = st.session_state.get("editor_gcp_res", {})
@@ -1424,18 +1431,18 @@ elif mod == "Usuarios - Servidores GCP":
                 with sqlite3.connect(DB_NAME) as conn:
                     for row_idx, updates in cambios_res.get("edited_rows", {}).items():
                         real_id = int(df_res.iloc[int(row_idx)]["id"])
-                        corr = updates.get("Correo", df_res.iloc[int(row_idx)]["Correo"])
-                        usr = updates.get("Usuario", df_res.iloc[int(row_idx)]["Usuario"])
-                        pwd = updates.get("Contraseña", df_res.iloc[int(row_idx)]["Contraseña"])
-                        acc = updates.get("Acceso maquina", df_res.iloc[int(row_idx)]["Acceso maquina"])
+                        corr = clean_val(updates.get("Correo", df_res.iloc[int(row_idx)]["Correo"]))
+                        usr = clean_val(updates.get("Usuario", df_res.iloc[int(row_idx)]["Usuario"]))
+                        pwd = clean_val(updates.get("Contraseña", df_res.iloc[int(row_idx)]["Contraseña"]))
+                        acc = clean_val(updates.get("Acceso maquina", df_res.iloc[int(row_idx)]["Acceso maquina"]))
                         
                         conn.execute("UPDATE gcp_resumen SET correo=?, usuario=?, password=?, acceso_maquina=? WHERE id=?", (corr, usr, pwd, acc, real_id))
                     
                     for new_row in cambios_res.get("added_rows", []):
-                        corr = new_row.get("Correo", "")
-                        usr = new_row.get("Usuario", "")
-                        pwd = new_row.get("Contraseña", "")
-                        acc = new_row.get("Acceso maquina", "")
+                        corr = clean_val(new_row.get("Correo"))
+                        usr = clean_val(new_row.get("Usuario"))
+                        pwd = clean_val(new_row.get("Contraseña"))
+                        acc = clean_val(new_row.get("Acceso maquina"))
                         
                         conn.execute("INSERT INTO gcp_resumen (correo, usuario, password, acceso_maquina) VALUES (?, ?, ?, ?)", (corr, usr, pwd, acc))
                         
