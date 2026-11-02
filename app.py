@@ -86,8 +86,6 @@ def init_db():
         ]
 
          # --- GESTION USUARIOS  ---
-        for query in tablas_sql:
-            c.execute(query)
 
         # Crear administrador por defecto ("admin" / "admin123")
         c.execute("SELECT COUNT(*) FROM usuarios")
