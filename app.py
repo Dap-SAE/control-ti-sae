@@ -87,13 +87,13 @@ def init_db():
             # --- TABLA USUARIOS ---
             """CREATE TABLE IF NOT EXISTS usuarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE,
-                password_hash TEXT, rol TEXT, estado TEXT)"""
-
+                password_hash TEXT, rol TEXT, estado TEXT)""",  # <--- ESTA ES LA COMA CRÍTICA FALTANTE
+                
             # --- TABLA SERVIDORES GCP (NUEVA) ---
             """CREATE TABLE IF NOT EXISTS usuarios_gcp (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, empresa TEXT, sucursal TEXT, 
                 usuario_ad_cloud TEXT, name_domain_user TEXT, password_ad_cloud TEXT, 
-                usuario_sap TEXT, status TEXT, cliente TEXT, acceso_sap_31_01 TEXT)"""    
+                usuario_sap TEXT, status TEXT, cliente TEXT, acceso_sap_31_01 TEXT)"""
         ]
 
         # PRIMERO: Crear todas las tablas
