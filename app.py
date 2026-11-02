@@ -1337,41 +1337,41 @@ elif mod == "Carga Masiva (Excel Completo)":
                 st.error(f"Error crítico en la importación: {e}")
 
 
-    elif mod == "Gestion Usuarios":
-    
-        st.title("⚙️ Gestión de Usuarios")
+elif mod == "Gestion Usuarios":
+    st.title("⚙️ Gestión de Usuarios")
     
     if st.session_state.rol != "Administrador":
         st.error("No tienes permisos para ver esta sección.")
         st.stop()
 
-    st.markdown("💡 *Edita roles y estados directamente en la tabla. Para crear usuarios, añade una fila al final.*")
+    st.markdown("💡 *Edita roles y estados directamente en la tabla. Para crear usuarios, añade una fila al final (+). Selecciona filas y presiona 'Suprimir' o 'Delete' para borrarlas.*")
     
     df_users = run_query("SELECT id, username AS 'Usuario', rol AS 'Rol', estado AS 'Estado' FROM usuarios")
     
-    # Editor de usuarios (No mostramos el password hash)
+    # Si la tabla está vacía (por seguridad), creamos la estructura base
+    if df_users.empty:
+        df_users = pd.DataFrame(columns=["id", "Usuario", "Rol", "Estado"])
+    
+    # Editor de usuarios con menús desplegables (Selectbox) para evitar errores de tipeo
     df_users_edit = st.data_editor(
-        df_users, hide_index=True, use_container_width=True, num_rows="dynamic", disabled=["id"], key="edit_users"
+        df_users, 
+        hide_index=True, 
+        use_container_width=True, 
+        num_rows="dynamic", 
+        disabled=["id"], 
+        key="edit_users",
+        column_config={
+            "Rol": st.column_config.SelectboxColumn("Rol", options=["Administrador", "Técnico", "Lector"], required=True),
+            "Estado": st.column_config.SelectboxColumn("Estado", options=["ACTIVO", "INACTIVO"], required=True),
+            "Usuario": st.column_config.TextColumn("Usuario", required=True)
+        }
     )
     
-    # Campo para generar contraseñas nuevas a usuarios creados/editados
-    st.divider()
-    st.subheader("🔑 Asignar o Cambiar Contraseña")
-    col_u, col_p, col_b = st.columns(3)
-    usr_sel = col_u.selectbox("Seleccionar Usuario", df_users["Usuario"].tolist() if not df_users.empty else [])
-    new_pass = col_p.text_input("Nueva Contraseña", type="password")
-    
-    if col_b.button("Cambiar Contraseña"):
-        if usr_sel and new_pass:
-            new_hash = hashlib.sha256(new_pass.encode()).hexdigest()
-            execute_db("UPDATE usuarios SET password_hash=? WHERE username=?", (new_hash, usr_sel))
-            st.success(f"Contraseña actualizada para {usr_sel}")
-
-    # Guardar cambios de roles/estados
     if st.button("💾 Guardar Cambios en Usuarios", key="btn_save_users"):
         cambios = st.session_state.get("edit_users", {})
         try:
             with sqlite3.connect(DB_NAME) as conn:
+                # 1. Modificar existentes
                 for row_idx, updates in cambios.get("edited_rows", {}).items():
                     real_id = int(df_users.iloc[int(row_idx)]["id"])
                     usr = updates.get("Usuario", df_users.iloc[int(row_idx)]["Usuario"])
@@ -1379,15 +1379,46 @@ elif mod == "Carga Masiva (Excel Completo)":
                     est = updates.get("Estado", df_users.iloc[int(row_idx)]["Estado"])
                     conn.execute("UPDATE usuarios SET username=?, rol=?, estado=? WHERE id=?", (usr, rol, est, real_id))
                 
+                # 2. Agregar nuevos
                 for new_row in cambios.get("added_rows", []):
-                    usr = new_row.get("Usuario", "")
+                    usr = str(new_row.get("Usuario", "")).strip()
                     rol = new_row.get("Rol", "Técnico")
                     est = new_row.get("Estado", "ACTIVO")
-                    # Contraseña por defecto temporal (temporal123)
-                    tmp_hash = hashlib.sha256("temporal123".encode()).hexdigest()
-                    conn.execute("INSERT INTO usuarios (username, password_hash, rol, estado) VALUES (?, ?, ?, ?)", (usr, tmp_hash, rol, est))
+                    
+                    if usr: # Solo guarda si escribieron un nombre de usuario
+                        # Contraseña por defecto temporal (temporal123)
+                        tmp_hash = hashlib.sha256("temporal123".encode()).hexdigest()
+                        conn.execute("INSERT INTO usuarios (username, password_hash, rol, estado) VALUES (?, ?, ?, ?)", (usr, tmp_hash, rol, est))
+                
+                # 3. Eliminar borrados
+                for row_idx in cambios.get("deleted_rows", []):
+                    real_id = int(df_users.iloc[int(row_idx)]["id"])
+                    conn.execute("DELETE FROM usuarios WHERE id=?", (real_id,))
             
             st.session_state.msg_exito = "¡Usuarios actualizados correctamente!"
             st.rerun()
         except Exception as e:
-            st.error(f"Error al guardar usuarios: {e}")
+            st.error(f"⚠️ Error al guardar: Verifica que el nombre de usuario no esté duplicado. Detalle técnico: {e}")
+
+    # Campo para generar contraseñas nuevas a usuarios creados/editados
+    st.divider()
+    st.subheader("🔑 Asignar o Cambiar Contraseña")
+    col_u, col_p, col_b = st.columns([2, 2, 1])
+    
+    usr_sel = col_u.selectbox("Seleccionar Usuario:", df_users["Usuario"].tolist() if not df_users.empty else [])
+    new_pass = col_p.text_input("Nueva Contraseña:", type="password")
+    
+    with col_b:
+        st.write("") # Espaciador para alinear el botón con las cajas de texto
+        st.write("")
+        if st.button("Cambiar Contraseña", use_container_width=True):
+            if usr_sel and new_pass:
+                try:
+                    new_hash = hashlib.sha256(new_pass.encode()).hexdigest()
+                    execute_db("UPDATE usuarios SET password_hash=? WHERE username=?", (new_hash, usr_sel))
+                    st.session_state.msg_exito = f"¡Contraseña actualizada con éxito para {usr_sel}!"
+                    st.rerun()
+                except Exception as e:
+                    st.error("Error al actualizar la contraseña.")
+            else:
+                st.warning("⚠️ Selecciona un usuario y escribe una contraseña nueva.")
