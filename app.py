@@ -98,7 +98,7 @@ def init_db():
             # --- TABLA GCP RESUMEN (NUEVA) ---
             """CREATE TABLE IF NOT EXISTS gcp_resumen (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, correo TEXT, usuario TEXT, 
-                password TEXT, acceso_maquina TEXT)"""
+                password TEXT, acceso_maquina TEXT)""",
 
             # --- TABLA EQUIPOS MOVILES (NUEVA) ---
             """CREATE TABLE IF NOT EXISTS equipos_moviles (
