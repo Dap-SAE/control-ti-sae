@@ -88,6 +88,12 @@ def init_db():
             """CREATE TABLE IF NOT EXISTS usuarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE,
                 password_hash TEXT, rol TEXT, estado TEXT)"""
+
+            # --- TABLA SERVIDORES GCP (NUEVA) ---
+            """CREATE TABLE IF NOT EXISTS usuarios_gcp (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, empresa TEXT, sucursal TEXT, 
+                usuario_ad_cloud TEXT, name_domain_user TEXT, password_ad_cloud TEXT, 
+                usuario_sap TEXT, status TEXT, cliente TEXT, acceso_sap_31_01 TEXT)"""    
         ]
 
         # PRIMERO: Crear todas las tablas
@@ -151,7 +157,7 @@ def execute_many_db(query, params_list):
 # Define qué módulos puede ver cada rol. Usa "*" para acceso total.
 PERMISOS = {
     "Administrador": ["*"],
-    "Técnico": ["Panel General", "Equipos", "Tickets", "Cuentas Redes"],
+    "Técnico": ["Panel General", "Equipos", "Tickets", "Cuentas Redes", "Servidores GCP"],
     "Lector": ["Panel General"]
 }
 
@@ -241,6 +247,8 @@ if tiene_permiso(st.session_state.rol, "Cuentas Redes"):
             st.session_state.modulo_activo = "Enlaces Entel"
         if st.button("🖨️ Impresoras", use_container_width=True):
             st.session_state.modulo_activo = "Impresoras"
+        if st.button("👥 Usuarios - Servidores GCP", use_container_width=True):
+            st.session_state.modulo_activo = "Usuarios - Servidores GCP"    
 
 # 4. REGISTRO DE TICKET
 if tiene_permiso(st.session_state.rol, "Tickets"):
@@ -1336,6 +1344,91 @@ elif mod == "Carga Masiva (Excel Completo)":
             except Exception as e:
                 st.error(f"Error crítico en la importación: {e}")
 
+# ------------------------------------------------------------------------------
+# USUARIOS - SERVIDORES GCP
+# ------------------------------------------------------------------------------
+elif mod == "Usuarios - Servidores GCP":
+    st.title("☁️ Servidores GCP - Usuarios")
+    st.markdown("💡 *Haz doble clic en las celdas para editar. Para **agregar un registro**, desliza hasta la última fila (+). Selecciona filas y presiona 'Suprimir' para eliminarlas.*")
+
+    # Extraer datos de la BD
+    df_gcp = run_query('''
+        SELECT id, 
+               empresa AS "Empresa", 
+               sucursal AS "Sucursal", 
+               usuario_ad_cloud AS "Usuario AD Cloud", 
+               name_domain_user AS "Name domain user", 
+               password_ad_cloud AS "Contraseña AD Cloud", 
+               usuario_sap AS "Usuario SAP", 
+               status AS "Status", 
+               cliente AS "Cliente", 
+               acceso_sap_31_01 AS "Acceso a SAP 31-01" 
+        FROM usuarios_gcp
+    ''')
+
+    # Si está vacía, forzamos la estructura
+    if df_gcp.empty:
+        df_gcp = pd.DataFrame(columns=["id", "Empresa", "Sucursal", "Usuario AD Cloud", "Name domain user", "Contraseña AD Cloud", "Usuario SAP", "Status", "Cliente", "Acceso a SAP 31-01"])
+
+    # Editor interactivo
+    df_gcp_edit = st.data_editor(
+        df_gcp,
+        hide_index=True,
+        use_container_width=True,
+        num_rows="dynamic",
+        disabled=["id"],
+        key="editor_gcp"
+    )
+
+    if st.button("💾 Guardar Cambios en BD", key="btn_save_gcp"):
+        cambios = st.session_state.get("editor_gcp", {})
+        try:
+            with sqlite3.connect(DB_NAME) as conn:
+                # 1. Actualizar registros modificados
+                for row_idx, updates in cambios.get("edited_rows", {}).items():
+                    real_id = int(df_gcp.iloc[int(row_idx)]["id"])
+                    
+                    emp = updates.get("Empresa", df_gcp.iloc[int(row_idx)]["Empresa"])
+                    suc = updates.get("Sucursal", df_gcp.iloc[int(row_idx)]["Sucursal"])
+                    usr_ad = updates.get("Usuario AD Cloud", df_gcp.iloc[int(row_idx)]["Usuario AD Cloud"])
+                    name = updates.get("Name domain user", df_gcp.iloc[int(row_idx)]["Name domain user"])
+                    pwd = updates.get("Contraseña AD Cloud", df_gcp.iloc[int(row_idx)]["Contraseña AD Cloud"])
+                    usr_sap = updates.get("Usuario SAP", df_gcp.iloc[int(row_idx)]["Usuario SAP"])
+                    stat = updates.get("Status", df_gcp.iloc[int(row_idx)]["Status"])
+                    cli = updates.get("Cliente", df_gcp.iloc[int(row_idx)]["Cliente"])
+                    acc_sap = updates.get("Acceso a SAP 31-01", df_gcp.iloc[int(row_idx)]["Acceso a SAP 31-01"])
+                    
+                    conn.execute("""UPDATE usuarios_gcp SET empresa=?, sucursal=?, usuario_ad_cloud=?, 
+                                    name_domain_user=?, password_ad_cloud=?, usuario_sap=?, status=?, 
+                                    cliente=?, acceso_sap_31_01=? WHERE id=?""", 
+                                 (emp, suc, usr_ad, name, pwd, usr_sap, stat, cli, acc_sap, real_id))
+                
+                # 2. Insertar registros nuevos
+                for new_row in cambios.get("added_rows", []):
+                    emp = new_row.get("Empresa", "")
+                    suc = new_row.get("Sucursal", "")
+                    usr_ad = new_row.get("Usuario AD Cloud", "")
+                    name = new_row.get("Name domain user", "")
+                    pwd = new_row.get("Contraseña AD Cloud", "")
+                    usr_sap = new_row.get("Usuario SAP", "")
+                    stat = new_row.get("Status", "")
+                    cli = new_row.get("Cliente", "")
+                    acc_sap = new_row.get("Acceso a SAP 31-01", "")
+                    
+                    conn.execute("""INSERT INTO usuarios_gcp (empresa, sucursal, usuario_ad_cloud, name_domain_user, 
+                                    password_ad_cloud, usuario_sap, status, cliente, acceso_sap_31_01) 
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
+                                 (emp, suc, usr_ad, name, pwd, usr_sap, stat, cli, acc_sap))
+                    
+                # 3. Eliminar registros
+                for row_idx in cambios.get("deleted_rows", []):
+                    real_id = int(df_gcp.iloc[int(row_idx)]["id"])
+                    conn.execute("DELETE FROM usuarios_gcp WHERE id=?", (real_id,))
+                    
+            st.session_state.msg_exito = "¡Usuarios de GCP actualizados correctamente!"
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error al guardar los datos de GCP: {e}")
 
 elif mod == "Gestion Usuarios":
     st.title("⚙️ Gestión de Usuarios")
