@@ -40,7 +40,7 @@ def init_db():
             )
         """)
 
-        # 2. CUENTAS DE CORREO a 14. GPS FLOTA
+        # 2. CUENTAS DE CORREO a 14. GPS FLOTA y USUARIOS
         tablas_sql = [
             """CREATE TABLE IF NOT EXISTS cuentas_correo (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, sociedad TEXT, correo TEXT UNIQUE, persona_asignada TEXT,
@@ -82,22 +82,26 @@ def init_db():
             """CREATE TABLE IF NOT EXISTS gps_flota (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, patente TEXT, vin TEXT, tipo TEXT,
                 marca TEXT, modelo TEXT, anio TEXT, imei TEXT, ultimo_reporte TEXT,
-                proveedor_gps TEXT, sucursal TEXT, estado TEXT)"""
+                proveedor_gps TEXT, sucursal TEXT, estado TEXT)""",
+                
+            # --- TABLA USUARIOS ---
+            """CREATE TABLE IF NOT EXISTS usuarios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE,
+                password_hash TEXT, rol TEXT, estado TEXT)"""
         ]
 
-         # --- GESTION USUARIOS  ---
+        # PRIMERO: Crear todas las tablas
+        for query in tablas_sql:
+            c.execute(query)
 
-        # Crear administrador por defecto ("admin" / "admin123")
+        # SEGUNDO: Verificar y crear el usuario administrador por defecto
         c.execute("SELECT COUNT(*) FROM usuarios")
         if c.fetchone()[0] == 0:
             default_hash = hashlib.sha256("admin123".encode()).hexdigest()
             conn.execute("INSERT INTO usuarios (username, password_hash, rol, estado) VALUES (?, ?, ?, ?)", 
                          ("admin", default_hash, "Administrador", "ACTIVO"))
-        
-        for query in tablas_sql:
-            c.execute(query)
 
-        # Migración automática
+        # Migración automática de computadores
         c.execute("PRAGMA table_info(computadores)")
         cols_existentes = [col[1] for col in c.fetchall()]
         
@@ -110,7 +114,6 @@ def init_db():
         if "num_factura" not in cols_existentes:
             try: conn.execute("ALTER TABLE computadores ADD COLUMN num_factura TEXT")
             except Exception: pass
-
 
 init_db()
 
