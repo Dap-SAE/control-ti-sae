@@ -99,6 +99,12 @@ def init_db():
             """CREATE TABLE IF NOT EXISTS gcp_resumen (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, correo TEXT, usuario TEXT, 
                 password TEXT, acceso_maquina TEXT)"""
+
+            # --- TABLA EQUIPOS MOVILES (NUEVA) ---
+            """CREATE TABLE IF NOT EXISTS equipos_moviles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, celular TEXT, modelo TEXT, 
+                telefono TEXT, card_sim TEXT, imei TEXT, personal TEXT, 
+                apk_komatsu_drivers TEXT, fecha_entrega TEXT)"""
         ]
 
         # PRIMERO: Crear todas las tablas
@@ -162,7 +168,7 @@ def execute_many_db(query, params_list):
 # Define qué módulos puede ver cada rol. Usa "*" para acceso total.
 PERMISOS = {
     "Administrador": ["*"],
-    "Técnico": ["Panel General", "Equipos", "Tickets", "Cuentas Redes", "Servidores GCP"],
+    "Técnico": ["Panel General", "Equipos", "Equipos Moviles", "Tickets", "Cuentas Redes", "Servidores GCP"],
     "Lector": ["Panel General"]
 }
 
@@ -232,6 +238,12 @@ if tiene_permiso(st.session_state.rol, "Equipos"):
             st.session_state.modulo_activo = "Equipos: Buscar"
         if st.button("🏷️ Generador de Etiquetas QR", use_container_width=True):
             st.session_state.modulo_activo = "Equipos: Generar QR"
+
+ # 2.5 EQUIPOS MOVILES (NUEVO MENÚ)
+if tiene_permiso(st.session_state.rol, "Equipos Moviles"):
+    with st.sidebar.expander("📱 Equipos Móviles"):
+        if st.button("📱 Gestión de Móviles", use_container_width=True):
+            st.session_state.modulo_activo = "Equipos Moviles"           
 
 # 3. CUENTAS & REDES
 if tiene_permiso(st.session_state.rol, "Cuentas Redes"):
@@ -703,9 +715,6 @@ elif mod == "Licencias Office 365":
     else:
         st.info("No hay licencias cargadas.")
 
-# ------------------------------------------------------------------------------
-# REDES WIFI
-# ------------------------------------------------------------------------------
 # ------------------------------------------------------------------------------
 # REDES WIFI
 # ------------------------------------------------------------------------------
@@ -1544,3 +1553,121 @@ elif mod == "Gestion Usuarios":
                     st.error("Error al actualizar la contraseña.")
             else:
                 st.warning("⚠️ Selecciona un usuario y escribe una contraseña nueva.")
+
+
+# ------------------------------------------------------------------------------
+# CUENTAS DE CORREO (Restaurado)
+# ------------------------------------------------------------------------------
+elif mod == "Casilla correo":
+    st.title("✉️ Cuentas & Redes - Casillas de Correo")
+    st.markdown("💡 *Haz doble clic en cualquier celda para editar. Para **agregar una cuenta**, desliza hasta la última fila (+).*")
+
+    def clean_val(v):
+        return "" if pd.isna(v) or v is None else str(v).strip()
+
+    df_correo = run_query('SELECT id, sociedad AS "Sociedad", correo AS "Correo", persona_asignada AS "Persona Asignada", sucursal AS "Sucursal", almacenamiento_gb AS "Almacenamiento (GB)", estado AS "Estado", password AS "Contraseña", notas AS "Notas" FROM cuentas_correo')
+
+    if df_correo.empty:
+        df_correo = pd.DataFrame(columns=["id", "Sociedad", "Correo", "Persona Asignada", "Sucursal", "Almacenamiento (GB)", "Estado", "Contraseña", "Notas"])
+
+    df_correo_edit = st.data_editor(df_correo, hide_index=True, use_container_width=True, num_rows="dynamic", disabled=["id"], key="editor_correo")
+
+    if st.button("💾 Guardar Cambios en Correos", key="btn_save_correo"):
+        cambios = st.session_state.get("editor_correo", {})
+        try:
+            with sqlite3.connect(DB_NAME) as conn:
+                for row_idx, updates in cambios.get("edited_rows", {}).items():
+                    real_id = int(df_correo.iloc[int(row_idx)]["id"])
+                    soc = clean_val(updates.get("Sociedad", df_correo.iloc[int(row_idx)]["Sociedad"]))
+                    corr = clean_val(updates.get("Correo", df_correo.iloc[int(row_idx)]["Correo"]))
+                    pers = clean_val(updates.get("Persona Asignada", df_correo.iloc[int(row_idx)]["Persona Asignada"]))
+                    suc = clean_val(updates.get("Sucursal", df_correo.iloc[int(row_idx)]["Sucursal"]))
+                    alm = clean_val(updates.get("Almacenamiento (GB)", df_correo.iloc[int(row_idx)]["Almacenamiento (GB)"]))
+                    est = clean_val(updates.get("Estado", df_correo.iloc[int(row_idx)]["Estado"]))
+                    pwd = clean_val(updates.get("Contraseña", df_correo.iloc[int(row_idx)]["Contraseña"]))
+                    nota = clean_val(updates.get("Notas", df_correo.iloc[int(row_idx)]["Notas"]))
+                    
+                    conn.execute("UPDATE cuentas_correo SET sociedad=?, correo=?, persona_asignada=?, sucursal=?, almacenamiento_gb=?, estado=?, password=?, notas=? WHERE id=?", (soc, corr, pers, suc, alm, est, pwd, nota, real_id))
+                
+                for new_row in cambios.get("added_rows", []):
+                    conn.execute("INSERT INTO cuentas_correo (sociedad, correo, persona_asignada, sucursal, almacenamiento_gb, estado, password, notas) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (clean_val(new_row.get("Sociedad")), clean_val(new_row.get("Correo")), clean_val(new_row.get("Persona Asignada")), clean_val(new_row.get("Sucursal")), clean_val(new_row.get("Almacenamiento (GB)")), clean_val(new_row.get("Estado")), clean_val(new_row.get("Contraseña")), clean_val(new_row.get("Notas"))))
+                    
+                for row_idx in cambios.get("deleted_rows", []):
+                    real_id = int(df_correo.iloc[int(row_idx)]["id"])
+                    conn.execute("DELETE FROM cuentas_correo WHERE id=?", (real_id,))
+                    
+            st.session_state.msg_exito = "¡Cuentas de correo actualizadas correctamente!"
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error al guardar correos: {e}")
+
+# ------------------------------------------------------------------------------
+# EQUIPOS MOVILES (Nuevo)
+# ------------------------------------------------------------------------------
+elif mod == "Equipos Moviles":
+    st.title("📱 Equipos Móviles")
+    st.markdown("💡 *Filtra la información o edita la tabla directamente. Para agregar registros, ve a la última fila (+).*")
+
+    # Filtros Interactivos
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        filtro_txt = st.text_input("🔍 Buscar por Nro de Teléfono, Personal o IMEI:")
+    with col_f2:
+        filtro_anio = st.text_input("📅 Filtrar por Año / Fecha (Ej: 2024, 2023-10):")
+
+    # Construcción dinámica de la consulta SQL
+    q = '''SELECT id, celular AS "Celular", modelo AS "Modelo", telefono AS "Telefono", 
+                  card_sim AS "Card SIM", imei AS "IMEI", personal AS "Personal", 
+                  apk_komatsu_drivers AS "APK Komatsu Drivers", fecha_entrega AS "Fecha Entrega" 
+           FROM equipos_moviles WHERE 1=1'''
+    params = []
+
+    if filtro_txt:
+        q += " AND (telefono LIKE ? OR personal LIKE ? OR imei LIKE ?)"
+        term = f"%{filtro_txt}%"
+        params.extend([term, term, term])
+    
+    if filtro_anio:
+        q += " AND fecha_entrega LIKE ?"
+        params.append(f"%{filtro_anio}%")
+
+    df_movil = run_query(q, tuple(params))
+
+    if df_movil.empty:
+        df_movil = pd.DataFrame(columns=["id", "Celular", "Modelo", "Telefono", "Card SIM", "IMEI", "Personal", "APK Komatsu Drivers", "Fecha Entrega"])
+
+    def clean_val(v):
+        return "" if pd.isna(v) or v is None else str(v).strip()
+
+    df_movil_edit = st.data_editor(df_movil, hide_index=True, use_container_width=True, num_rows="dynamic", disabled=["id"], key="editor_moviles")
+
+    if st.button("💾 Guardar Cambios en Móviles", key="btn_save_movil"):
+        cambios = st.session_state.get("editor_moviles", {})
+        try:
+            with sqlite3.connect(DB_NAME) as conn:
+                for row_idx, updates in cambios.get("edited_rows", {}).items():
+                    real_id = int(df_movil.iloc[int(row_idx)]["id"])
+                    cel = clean_val(updates.get("Celular", df_movil.iloc[int(row_idx)]["Celular"]))
+                    mod_eq = clean_val(updates.get("Modelo", df_movil.iloc[int(row_idx)]["Modelo"]))
+                    tel = clean_val(updates.get("Telefono", df_movil.iloc[int(row_idx)]["Telefono"]))
+                    sim = clean_val(updates.get("Card SIM", df_movil.iloc[int(row_idx)]["Card SIM"]))
+                    imei = clean_val(updates.get("IMEI", df_movil.iloc[int(row_idx)]["IMEI"]))
+                    pers = clean_val(updates.get("Personal", df_movil.iloc[int(row_idx)]["Personal"]))
+                    apk = clean_val(updates.get("APK Komatsu Drivers", df_movil.iloc[int(row_idx)]["APK Komatsu Drivers"]))
+                    fec = clean_val(updates.get("Fecha Entrega", df_movil.iloc[int(row_idx)]["Fecha Entrega"]))
+                    
+                    conn.execute("UPDATE equipos_moviles SET celular=?, modelo=?, telefono=?, card_sim=?, imei=?, personal=?, apk_komatsu_drivers=?, fecha_entrega=? WHERE id=?", 
+                                 (cel, mod_eq, tel, sim, imei, pers, apk, fec, real_id))
+                
+                for new_row in cambios.get("added_rows", []):
+                    conn.execute("INSERT INTO equipos_moviles (celular, modelo, telefono, card_sim, imei, personal, apk_komatsu_drivers, fecha_entrega) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", 
+                                 (clean_val(new_row.get("Celular")), clean_val(new_row.get("Modelo")), clean_val(new_row.get("Telefono")), clean_val(new_row.get("Card SIM")), clean_val(new_row.get("IMEI")), clean_val(new_row.get("Personal")), clean_val(new_row.get("APK Komatsu Drivers")), clean_val(new_row.get("Fecha Entrega"))))
+                
+                for row_idx in cambios.get("deleted_rows", []):
+                    real_id = int(df_movil.iloc[int(row_idx)]["id"])
+                    conn.execute("DELETE FROM equipos_moviles WHERE id=?", (real_id,))
+            
+            st.session_state.msg_exito = "¡Equipos Móviles actualizados correctamente!"
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error al guardar equipos móviles: {e}")      
