@@ -2,7 +2,7 @@ import io
 import PIL.Image
 import pandas as pd
 import qrcode
-import sqlite3
+import psycopg2
 import streamlit as st
 from datetime import datetime
 import hashlib
@@ -12,128 +12,133 @@ st.set_page_config(
     page_title="Control TI - SAE", page_icon="💻", layout="wide"
 )
 
-# Notificación flotante persistente para confirmar guardados tras un st.rerun()
+# Notificación flotante persistente
 if "msg_exito" in st.session_state and st.session_state.msg_exito:
     st.toast(st.session_state.msg_exito, icon="🎉")
     st.session_state.msg_exito = None
 
-DB_NAME = "control_ti.db"
+# Conexión Segura a Neon
+DB_URL = st.secrets["DATABASE_URL"]
 
+# --- ENVOLTORIO INTELIGENTE (TRADUCE SQLITE A POSTGRESQL EN TIEMPO REAL) ---
+def procesar_query(q):
+    # Traduce comodines y maneja conflictos de inserción que antes cubría SQLite
+    q = q.replace("?", "%s")
+    q = q.replace("INSERT OR REPLACE INTO", "INSERT INTO")
+    if "INSERT INTO computadores" in q and "ON CONFLICT" not in q:
+        q += " ON CONFLICT (nombre_equipo) DO NOTHING"
+    elif "INSERT INTO credenciales_o365" in q and "ON CONFLICT" not in q:
+        q += " ON CONFLICT (cuenta) DO NOTHING"
+    return q
+
+class PostgresWrapper:
+    def __init__(self, conn):
+        self.conn = conn
+    def execute(self, query, params=()):
+        with self.conn.cursor() as cur:
+            cur.execute(procesar_query(query), params)
+    def executemany(self, query, params_list):
+        from psycopg2.extras import execute_batch
+        with self.conn.cursor() as cur:
+            execute_batch(cur, procesar_query(query), params_list)
+    def commit(self):
+        self.conn.commit()
+    def close(self):
+        self.conn.close()
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.commit()
+        self.close()
+
+class DummySQLite:
+    @staticmethod
+    def connect(db_name):
+        return PostgresWrapper(psycopg2.connect(DB_URL))
+
+# Engañamos a las funciones antiguas locales para que sigan funcionando intactas
+sqlite3 = DummySQLite()
+
+# --- FUNCIONES DE BASE DE DATOS OPTIMIZADAS ---
+def run_query(query, params=()):
+    try:
+        conn = psycopg2.connect(DB_URL)
+        df = pd.read_sql_query(procesar_query(query), conn, params=params)
+        conn.close()
+        return df
+    except Exception as e:
+        st.error(f"Error de base de datos (Lectura): {e}")
+        return pd.DataFrame()
+
+def execute_db(query, params=()):
+    try:
+        with psycopg2.connect(DB_URL) as conn:
+            with conn.cursor() as cur:
+                cur.execute(procesar_query(query), params)
+    except Exception as e:
+        st.error(f"Error de base de datos (Escritura): {e}")
+        raise e
+
+def execute_many_db(query, params_list):
+    try:
+        with psycopg2.connect(DB_URL) as conn:
+            from psycopg2.extras import execute_batch
+            with conn.cursor() as cur:
+                execute_batch(cur, procesar_query(query), params_list)
+    except Exception as e:
+        st.error(f"Error de base de datos (Escritura Masiva): {e}")
+        raise e
 
 def init_db():
-    # Uso de gestor de contexto (with) para asegurar el cierre automático de la conexión
-    with sqlite3.connect(DB_NAME) as conn:
-        c = conn.cursor()
+    with psycopg2.connect(DB_URL) as conn:
+        with conn.cursor() as c:
+            # 1. COMPUTADORES (Auto-creación con PostgreSQL SERIAL)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS computadores (
+                    id SERIAL PRIMARY KEY,
+                    sucursal TEXT, estado TEXT, tipo_equipo TEXT, nombre_equipo TEXT UNIQUE,
+                    serial_number TEXT, mac_ethernet TEXT, mac_wifi TEXT, fecha_inicio TEXT,
+                    usuario TEXT, marca_modelo TEXT, procesador TEXT, ram TEXT, version_windows TEXT,
+                    version_antivirus TEXT, dominio_tsae TEXT, estado_actualizacion TEXT,
+                    act_automatica TEXT, office TEXT, cuenta_office_365 TEXT, anydesk TEXT,
+                    pass_any TEXT, observacion TEXT, email TEXT, acceso_sap TEXT,
+                    ultima_mantencion TEXT, ultima_actualizacion_planilla TEXT, ex_usuario TEXT,
+                    proveedor TEXT, num_factura TEXT
+                )
+            """)
 
-        # 1. COMPUTADORES
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS computadores (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sucursal TEXT, estado TEXT, tipo_equipo TEXT, nombre_equipo TEXT UNIQUE,
-                serial_number TEXT, mac_ethernet TEXT, mac_wifi TEXT, fecha_inicio TEXT,
-                usuario TEXT, marca_modelo TEXT, procesador TEXT, ram TEXT, version_windows TEXT,
-                version_antivirus TEXT, dominio_tsae TEXT, estado_actualizacion TEXT,
-                act_automatica TEXT, office TEXT, cuenta_office_365 TEXT, anydesk TEXT,
-                pass_any TEXT, observacion TEXT, email TEXT, acceso_sap TEXT,
-                ultima_mantencion TEXT, ultima_actualizacion_planilla TEXT, ex_usuario TEXT,
-                proveedor TEXT, num_factura TEXT
-            )
-        """)
-
-        # 2. CUENTAS DE CORREO a 14. GPS FLOTA y USUARIOS
-        tablas_sql = [
-            """CREATE TABLE IF NOT EXISTS cuentas_correo (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, sociedad TEXT, correo TEXT UNIQUE, persona_asignada TEXT,
-                sucursal TEXT, almacenamiento_gb TEXT, estado TEXT, password TEXT, notas TEXT)""",
-            """CREATE TABLE IF NOT EXISTS credenciales_o365 (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, cuenta TEXT UNIQUE, power_bi TEXT, password TEXT,
-                power_bi_gateway TEXT, clave_recuperacion TEXT, tenant TEXT, notas TEXT)""",
-            """CREATE TABLE IF NOT EXISTS impresoras (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, sucursal TEXT, ip TEXT, marca TEXT, modelo TEXT,
-                serial_number TEXT, mac TEXT, fecha_compra TEXT, area TEXT, ubicacion TEXT, persona_asignada TEXT, 
-                estado TEXT, toner TEXT, admin TEXT, observacion TEXT)""",
-            """CREATE TABLE IF NOT EXISTS credenciales_wifi (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, sucursal TEXT, ssid TEXT, password TEXT, ip TEXT, notas TEXT)""",
-            """CREATE TABLE IF NOT EXISTS servidores (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, servidor TEXT UNIQUE, ip TEXT, usuario TEXT, password TEXT,
-                password_nueva TEXT, espacio_disco TEXT, ram TEXT, notas TEXT)""",
-            """CREATE TABLE IF NOT EXISTS enlaces_telecom (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, proveedor TEXT, sucursal TEXT, codigo_servicio TEXT,
-                segmento_lan TEXT, firewall TEXT, wan TEXT, banda_ancha TEXT, notas TEXT)""",
-            """CREATE TABLE IF NOT EXISTS acceso_camaras (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, sucursal TEXT, ip_sn TEXT, nombre TEXT, usuario TEXT, 
-                password TEXT, notas TEXT)""",
-            """CREATE TABLE IF NOT EXISTS tickets_red (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, num_ticket TEXT, fecha_apertura TEXT, sucursal TEXT,
-                motivo TEXT, estado TEXT, fecha_cierre TEXT, demora TEXT, observacion TEXT)""",
-            """CREATE TABLE IF NOT EXISTS tickets_gotruck (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, num_ticket TEXT, fecha_apertura TEXT, sucursal TEXT,
-                motivo TEXT, estado TEXT, fecha_cierre TEXT, demora TEXT, observacion TEXT)""",
-            """CREATE TABLE IF NOT EXISTS historial_asignaciones (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, nombre_equipo TEXT, usuario TEXT,
-                fecha_asignacion TEXT, fecha_devolucion TEXT, observacion TEXT)""",
-            """CREATE TABLE IF NOT EXISTS asignacion_ip_entel (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, categoria TEXT, client_name TEXT, 
-                mac_address TEXT, lan_ip TEXT)""",
-            """CREATE TABLE IF NOT EXISTS ip_libres (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, categoria TEXT, ip_disponible TEXT)""",
+            tablas_sql = [
+                "CREATE TABLE IF NOT EXISTS cuentas_correo (id SERIAL PRIMARY KEY, sociedad TEXT, correo TEXT UNIQUE, persona_asignada TEXT, sucursal TEXT, almacenamiento_gb TEXT, estado TEXT, password TEXT, notas TEXT)",
+                "CREATE TABLE IF NOT EXISTS credenciales_o365 (id SERIAL PRIMARY KEY, cuenta TEXT UNIQUE, power_bi TEXT, password TEXT, power_bi_gateway TEXT, clave_recuperacion TEXT, tenant TEXT, notas TEXT)",
+                "CREATE TABLE IF NOT EXISTS impresoras (id SERIAL PRIMARY KEY, sucursal TEXT, ip TEXT, marca TEXT, modelo TEXT, serial_number TEXT, mac TEXT, fecha_compra TEXT, area TEXT, ubicacion TEXT, persona_asignada TEXT, estado TEXT, toner TEXT, admin TEXT, observacion TEXT)",
+                "CREATE TABLE IF NOT EXISTS credenciales_wifi (id SERIAL PRIMARY KEY, sucursal TEXT, ssid TEXT, password TEXT, ip TEXT, notas TEXT)",
+                "CREATE TABLE IF NOT EXISTS servidores (id SERIAL PRIMARY KEY, servidor TEXT UNIQUE, ip TEXT, usuario TEXT, password TEXT, password_nueva TEXT, espacio_disco TEXT, ram TEXT, notas TEXT)",
+                "CREATE TABLE IF NOT EXISTS enlaces_telecom (id SERIAL PRIMARY KEY, proveedor TEXT, sucursal TEXT, codigo_servicio TEXT, segmento_lan TEXT, firewall TEXT, wan TEXT, banda_ancha TEXT, notas TEXT)",
+                "CREATE TABLE IF NOT EXISTS acceso_camaras (id SERIAL PRIMARY KEY, sucursal TEXT, ip_sn TEXT, nombre TEXT, usuario TEXT, password TEXT, notas TEXT)",
+                "CREATE TABLE IF NOT EXISTS tickets_red (id SERIAL PRIMARY KEY, num_ticket TEXT, fecha_apertura TEXT, sucursal TEXT, motivo TEXT, estado TEXT, fecha_cierre TEXT, demora TEXT, observacion TEXT)",
+                "CREATE TABLE IF NOT EXISTS tickets_gotruck (id SERIAL PRIMARY KEY, num_ticket TEXT, fecha_apertura TEXT, sucursal TEXT, motivo TEXT, estado TEXT, fecha_cierre TEXT, demora TEXT, observacion TEXT)",
+                "CREATE TABLE IF NOT EXISTS historial_asignaciones (id SERIAL PRIMARY KEY, nombre_equipo TEXT, usuario TEXT, fecha_asignacion TEXT, fecha_devolucion TEXT, observacion TEXT)",
+                "CREATE TABLE IF NOT EXISTS asignacion_ip_entel (id SERIAL PRIMARY KEY, categoria TEXT, client_name TEXT, mac_address TEXT, lan_ip TEXT)",
+                "CREATE TABLE IF NOT EXISTS ip_libres (id SERIAL PRIMARY KEY, categoria TEXT, ip_disponible TEXT)",
+                "CREATE TABLE IF NOT EXISTS gps_flota (id SERIAL PRIMARY KEY, patente TEXT, vin TEXT, tipo TEXT, marca TEXT, modelo TEXT, anio TEXT, imei TEXT, ultimo_reporte TEXT, proveedor_gps TEXT, sucursal TEXT, estado TEXT)",
+                "CREATE TABLE IF NOT EXISTS usuarios (id SERIAL PRIMARY KEY, username TEXT UNIQUE, password_hash TEXT, rol TEXT, estado TEXT)",
+                "CREATE TABLE IF NOT EXISTS usuarios_gcp (id SERIAL PRIMARY KEY, empresa TEXT, sucursal TEXT, usuario_ad_cloud TEXT, name_domain_user TEXT, password_ad_cloud TEXT, usuario_sap TEXT, status TEXT, cliente TEXT, acceso_sap_31_01 TEXT)",
+                "CREATE TABLE IF NOT EXISTS gcp_resumen (id SERIAL PRIMARY KEY, correo TEXT, usuario TEXT, password TEXT, acceso_maquina TEXT)",
+                "CREATE TABLE IF NOT EXISTS equipos_moviles (id SERIAL PRIMARY KEY, celular TEXT, modelo TEXT, telefono TEXT, card_sim TEXT, imei TEXT, personal TEXT, apk_komatsu_drivers TEXT, fecha_entrega TEXT)",
+                "CREATE TABLE IF NOT EXISTS credenciales_camaras_default (id SERIAL PRIMARY KEY, usuario TEXT, password TEXT)"
+            ]
             
-            # --- TABLA GPS  ---
-            """CREATE TABLE IF NOT EXISTS gps_flota (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, patente TEXT, vin TEXT, tipo TEXT,
-                marca TEXT, modelo TEXT, anio TEXT, imei TEXT, ultimo_reporte TEXT,
-                proveedor_gps TEXT, sucursal TEXT, estado TEXT)""",
-                
-            # --- TABLA USUARIOS ---
-            """CREATE TABLE IF NOT EXISTS usuarios (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE,
-                password_hash TEXT, rol TEXT, estado TEXT)""",  # <--- ESTA ES LA COMA CRÍTICA FALTANTE
-                
-            # --- TABLA SERVIDORES GCP ---
-            """CREATE TABLE IF NOT EXISTS usuarios_gcp (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, empresa TEXT, sucursal TEXT, 
-                usuario_ad_cloud TEXT, name_domain_user TEXT, password_ad_cloud TEXT, 
-                usuario_sap TEXT, status TEXT, cliente TEXT, acceso_sap_31_01 TEXT)""",
-                
-            # --- TABLA GCP RESUMEN (NUEVA) ---
-            """CREATE TABLE IF NOT EXISTS gcp_resumen (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, correo TEXT, usuario TEXT, 
-                password TEXT, acceso_maquina TEXT)""",
+            for query in tablas_sql:
+                c.execute(query)
 
-            # --- TABLA EQUIPOS MOVILES (NUEVA) ---
-            """CREATE TABLE IF NOT EXISTS equipos_moviles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, celular TEXT, modelo TEXT, 
-                telefono TEXT, card_sim TEXT, imei TEXT, personal TEXT, 
-                apk_komatsu_drivers TEXT, fecha_entrega TEXT)"""
-        ]
-
-        # PRIMERO: Crear todas las tablas
-        for query in tablas_sql:
-            c.execute(query)
-
-        # SEGUNDO: Verificar y crear el usuario administrador por defecto
-        c.execute("SELECT COUNT(*) FROM usuarios")
-        if c.fetchone()[0] == 0:
-            default_hash = hashlib.sha256("admin123".encode()).hexdigest()
-            conn.execute("INSERT INTO usuarios (username, password_hash, rol, estado) VALUES (?, ?, ?, ?)", 
-                         ("admin", default_hash, "Administrador", "ACTIVO"))
-
-        # Migración automática de computadores
-        c.execute("PRAGMA table_info(computadores)")
-        cols_existentes = [col[1] for col in c.fetchall()]
-        
-        if "teamviewer" in cols_existentes and "pass_any" not in cols_existentes:
-            try: conn.execute("ALTER TABLE computadores RENAME COLUMN teamviewer TO pass_any")
-            except Exception: pass
-        if "proveedor" not in cols_existentes:
-            try: conn.execute("ALTER TABLE computadores ADD COLUMN proveedor TEXT")
-            except Exception: pass
-        if "num_factura" not in cols_existentes:
-            try: conn.execute("ALTER TABLE computadores ADD COLUMN num_factura TEXT")
-            except Exception: pass
+            # Crear administrador inicial en Neon
+            c.execute("SELECT COUNT(*) FROM usuarios")
+            if c.fetchone()[0] == 0:
+                default_hash = hashlib.sha256("admin123".encode()).hexdigest()
+                c.execute("INSERT INTO usuarios (username, password_hash, rol, estado) VALUES (%s, %s, %s, %s)", 
+                          ("admin", default_hash, "Administrador", "ACTIVO"))
 
 init_db()
-
 
 # --- FUNCIONES DE BASE DE DATOS OPTIMIZADAS ---
 def run_query(query, params=()):
