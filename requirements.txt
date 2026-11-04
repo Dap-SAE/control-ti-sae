@@ -4,3 +4,4 @@ qrcode
 Pillow
 opencv-python-headless
 openpyxl
+psycopg2-binary
