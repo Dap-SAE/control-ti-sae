@@ -19,6 +19,7 @@ if "msg_exito" in st.session_state and st.session_state.msg_exito:
 
 # Conexión Segura a Neon
 DB_URL = st.secrets["DATABASE_URL"]
+DB_NAME = "control_TI.db"  # <--- AGREGA ESTA LÍNEA PARA EVITAR EL ERROR
 
 # --- ENVOLTORIO INTELIGENTE (TRADUCE SQLITE A POSTGRESQL EN TIEMPO REAL) ---
 def procesar_query(q):
