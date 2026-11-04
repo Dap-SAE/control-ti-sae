@@ -23,25 +23,39 @@ DB_NAME = "control_TI.db"  # <--- AGREGA ESTA LÍNEA PARA EVITAR EL ERROR
 
 # --- ENVOLTORIO INTELIGENTE (TRADUCE SQLITE A POSTGRESQL EN TIEMPO REAL) ---
 def procesar_query(q):
-    # Traduce comodines y maneja conflictos de inserción que antes cubría SQLite
     q = q.replace("?", "%s")
     q = q.replace("INSERT OR REPLACE INTO", "INSERT INTO")
     if "INSERT INTO computadores" in q and "ON CONFLICT" not in q:
         q += " ON CONFLICT (nombre_equipo) DO NOTHING"
-    elif "INSERT INTO credenciales_o365" in q and "ON CONFLICT" not in q:
-        q += " ON CONFLICT (cuenta) DO NOTHING"
     return q
+
+class CustomCursor:
+    def __init__(self, cur):
+        self.cur = cur
+    def execute(self, query, params=()):
+        self.cur.execute(procesar_query(query), params)
+    def executemany(self, query, params_list):
+        from psycopg2.extras import execute_batch
+        execute_batch(self.cur, procesar_query(query), params_list)
+    def fetchall(self): return self.cur.fetchall()
+    def fetchone(self): return self.cur.fetchone()
+    def fetchmany(self, size): return self.cur.fetchmany(size)
+    @property
+    def description(self): return self.cur.description
+    def close(self): self.cur.close()
+    def __iter__(self): return iter(self.cur)
 
 class PostgresWrapper:
     def __init__(self, conn):
         self.conn = conn
+    def cursor(self):
+        return CustomCursor(self.conn.cursor())
     def execute(self, query, params=()):
-        with self.conn.cursor() as cur:
-            cur.execute(procesar_query(query), params)
+        with self.cursor() as cur:
+            cur.execute(query, params)
     def executemany(self, query, params_list):
-        from psycopg2.extras import execute_batch
-        with self.conn.cursor() as cur:
-            execute_batch(cur, procesar_query(query), params_list)
+        with self.cursor() as cur:
+            cur.executemany(query, params_list)
     def commit(self):
         self.conn.commit()
     def close(self):
@@ -55,9 +69,8 @@ class PostgresWrapper:
 class DummySQLite:
     @staticmethod
     def connect(db_name):
-        return PostgresWrapper(psycopg2.connect(DB_URL))
+        return PostgresWrapper(psycopg2.connect(st.secrets["DATABASE_URL"]))
 
-# Engañamos a las funciones antiguas locales para que sigan funcionando intactas
 sqlite3 = DummySQLite()
 
 # --- FUNCIONES DE BASE DE DATOS OPTIMIZADAS ---
