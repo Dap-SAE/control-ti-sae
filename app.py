@@ -44,6 +44,8 @@ class CustomCursor:
     def description(self): return self.cur.description
     def close(self): self.cur.close()
     def __iter__(self): return iter(self.cur)
+    def __enter__(self): return self
+    def __exit__(self, exc_type, exc_val, exc_tb): self.close()
 
 class PostgresWrapper:
     def __init__(self, conn):
