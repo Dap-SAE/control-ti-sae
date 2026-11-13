@@ -1021,8 +1021,7 @@ elif mod == "Acceso a Cámaras":
 
     # --- INICIALIZACIÓN SILENCIOSA DE TABLA CREDENCIALES ---
     with sqlite3.connect(DB_NAME) as conn:
-        conn.execute("""CREATE TABLE IF NOT EXISTS credenciales_camaras_default (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT, password TEXT)""")
+        conn.execute("CREATE TABLE IF NOT EXISTS credenciales_camaras_default (id SERIAL PRIMARY KEY, usuario TEXT, password TEXT)")
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM credenciales_camaras_default")
         if cursor.fetchone()[0] == 0:
