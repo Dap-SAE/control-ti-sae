@@ -805,7 +805,7 @@ elif mod == "Asignación IP Entel":
 
     # 1. IP ASIGNADAS
     st.subheader("📡 IP Asignadas (Entel Nueva)")
-    df_entel = run_query('SELECT id, categoria AS "Categoría", client_name AS "Client Name", mac_address AS "MAC Address", lan_ip AS "LAN IP" FROM asignacion_ip_entel')
+    df_entel = run_query("""SELECT id, categoria AS "Categoría", client_name AS "Client Name", mac_address AS "MAC Address", lan_ip AS "LAN IP" FROM asignacion_ip_entel ORDER BY NULLIF(lan_ip, '')::inet ASC""")
     
     if df_entel.empty:
         df_entel = pd.DataFrame(columns=["id", "Categoría", "Client Name", "MAC Address", "LAN IP"])
