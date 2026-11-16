@@ -763,6 +763,30 @@ elif mod == "Reportabilidad":
                             
                             st.dataframe(df_vista[cols_validas], hide_index=True, use_container_width=True)
                             
+                    # 7. Botón de descarga unificada en Excel
+                    st.markdown("---")
+                    import io
+                    
+                    # Seleccionar las columnas relevantes incluyendo el proveedor asignado
+                    columnas_excel = ["Proveedor_Asignado", "Nombre", "Patente", "Fecha", "Evento", "Velocidad", "Ubicacion"]
+                    cols_finales = [c for c in columnas_excel if c in df_inactivos.columns]
+                    
+                    # Preparar y ordenar el dataframe final
+                    df_descarga = df_inactivos[cols_finales].rename(columns={"Proveedor_Asignado": "Proveedor GPS"})
+                    df_descarga = df_descarga.sort_values(by="Proveedor GPS")
+                    
+                    # Crear el archivo en memoria
+                    buffer = io.BytesIO()
+                    df_descarga.to_excel(buffer, index=False, sheet_name="Inactivos")
+                    
+                    st.download_button(
+                        label="📥 Descargar Excel con todos los proveedores",
+                        data=buffer.getvalue(),
+                        file_name=f"Reporte_Inactivos_GPS_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                            
         except Exception as e:
             st.error(f"Error al procesar el Excel: {e}")
 
