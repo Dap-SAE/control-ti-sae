@@ -307,6 +307,9 @@ if tiene_permiso(st.session_state.rol, "Flota GPS"):
     with st.sidebar.expander("📍 Flota & GPS"):
         if st.button("🛰️ Control de GPS", use_container_width=True):
             st.session_state.modulo_activo = "Control de GPS"
+        if st.button("📊 Reportabilidad", use_container_width=True):
+            st.session_state.modulo_activo = "Reportabilidad"    
+            
 
 # --- MÓDULO EXCLUSIVO DE ADMINISTRACIÓN ---
 if tiene_permiso(st.session_state.rol, "Administrador"):
@@ -712,6 +715,56 @@ elif mod == "Control de GPS":
     import gps  # Importamos el nuevo archivo gps.py
     gps.render_gps_module()
 
+# ------------------------------------------------------------------------------
+# REPORTABILIDAD GPS
+# ------------------------------------------------------------------------------
+elif mod == "Reportabilidad":
+    st.title("📊 Flota & GPS - Reportabilidad")
+    st.markdown("💡 *Sube el reporte de plataforma. El sistema detectará automáticamente las patentes con estado Inactivo > 24, cruzará la información con tu base de datos y las agrupará por proveedor.*")
+    
+    # 1. Carga del archivo
+    archivo_excel = st.file_uploader("Sube el reporte de plataforma (Excel)", type=["xlsx", "xls"])
+    
+    if archivo_excel is not None:
+        try:
+            # 2. Leer el Excel subido
+            df_reporte = pd.read_excel(archivo_excel)
+            
+            # Validar que existan las columnas
+            if "Estado" not in df_reporte.columns or "Patente" not in df_reporte.columns:
+                st.error("El Excel no tiene el formato correcto. Faltan las columnas 'Estado' o 'Patente'.")
+            else:
+                # 3. Filtrar solo los Inactivos > 24
+                df_inactivos = df_reporte[df_reporte["Estado"].astype(str).str.contains("Inactivo > 24", case=False, na=False)].copy()
+                
+                if df_inactivos.empty:
+                    st.success("✅ No hay vehículos con 'Inactivo > 24' en este reporte.")
+                else:
+                    # 4. Obtener las patentes y proveedores de Neon usando tu función run_query optimizada
+                    df_bd = run_query("SELECT patente, proveedor_gps FROM gps_flota")
+                    
+                    df_inactivos["Patente_Clean"] = df_inactivos["Patente"].astype(str).str.strip().str.upper()
+                    df_bd["patente_clean"] = df_bd["patente"].astype(str).str.strip().str.upper()
+                    
+                    # 5. Cruzar datos
+                    mapa_proveedores = dict(zip(df_bd["patente_clean"], df_bd["proveedor_gps"]))
+                    df_inactivos["Proveedor_Asignado"] = df_inactivos["Patente_Clean"].map(mapa_proveedores).fillna("EXTERNOS")
+                    
+                    # 6. Mostrar los resultados
+                    st.markdown("### 🚨 Equipos Inactivos > 24 Horas")
+                    
+                    proveedores_encontrados = df_inactivos["Proveedor_Asignado"].unique()
+                    for prov in sorted(proveedores_encontrados):
+                        # Mostrar el nombre del proveedor y la cantidad de equipos afectados
+                        with st.expander(f"📌 Proveedor: {prov} ({len(df_inactivos[df_inactivos['Proveedor_Asignado'] == prov])} equipos)", expanded=True):
+                            df_vista = df_inactivos[df_inactivos["Proveedor_Asignado"] == prov]
+                            columnas_mostrar = ["Nombre", "Patente", "Fecha", "Evento", "Velocidad", "Ubicacion"]
+                            cols_validas = [c for c in columnas_mostrar if c in df_vista.columns]
+                            
+                            st.dataframe(df_vista[cols_validas], hide_index=True, use_container_width=True)
+                            
+        except Exception as e:
+            st.error(f"Error al procesar el Excel: {e}")
 
 # ------------------------------------------------------------------------------
 # LICENCIAS OFFICE 365
