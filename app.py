@@ -737,6 +737,16 @@ elif mod == "Reportabilidad":
                 # 3. Filtrar solo los Inactivos > 24
                 df_inactivos = df_reporte[df_reporte["Estado"].astype(str).str.contains("Inactivo > 24", case=False, na=False)].copy()
                 
+                # --- NUEVO FILTRO: EXCLUIR PORTÁTILES, BAJAS, ROBOS Y FLOTA COPEC ---
+                # Esta regla atrapa todas las variaciones ortográficas y mayúsculas/minúsculas
+                exclusiones = r"port[áa]til|port[áa]ti|p[óo]rtatil|antiguo|entregado|malo|robado|copec"
+                
+                # Filtramos la columna 'Nombre' (el símbolo '~' significa "que NO contenga")
+                df_inactivos = df_inactivos[~df_inactivos["Nombre"].astype(str).str.contains(exclusiones, case=False, na=False, regex=True)]
+                
+                # Por seguridad, también excluimos si la palabra "COPEC" viene escondida en la columna Patente
+                df_inactivos = df_inactivos[~df_inactivos["Patente"].astype(str).str.contains("copec", case=False, na=False)]
+                
                 if df_inactivos.empty:
                     st.success("✅ No hay vehículos con 'Inactivo > 24' en este reporte.")
                 else:
